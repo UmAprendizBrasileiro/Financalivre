@@ -2,7 +2,7 @@
 
 > Aplicativo de controle financeiro pessoal — gratuito, instalável e seguro.
 
-**Acesse agora:** [https://SEU-USUARIO.github.io/financalivre](https://SEU-USUARIO.github.io/financalivre)
+**Acesse agora:** https://SEU-USUARIO.github.io/financalivre](https://SEU-USUARIO.github.io/financalivre)](https://github.com/UmAprendizBrasileiro/Financalivre)
 
 ---
 
