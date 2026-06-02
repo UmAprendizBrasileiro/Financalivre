@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://api.coingecko.com https://brapi.dev https://fonts.googleapis.com; img-src 'self' data:; worker-src blob:;"/>
+
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json"/>
+  <meta name="theme-color" content="#0B0F19"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="FinançaLivre"/>
+  <link rel="apple-touch-icon" href="./icon-192.png"/>
+
+  <!-- SEO -->
+  <meta name="description" content="Controle financeiro pessoal — gastos, dívidas, mercado e metas."/>
+  <meta property="og:title" content="FinançaLivre"/>
+  <meta property="og:description" content="Controle financeiro pessoal gratuito e instalável."/>
+  <meta property="og:type" content="website"/>
+
+  <meta http-equiv="X-Content-Type-Options" content="nosniff"/>
+  <meta name="referrer" content="strict-origin-when-cross-origin"/>
+  <title>FinançaLivre</title>
+
+  <!-- Dependências via CDN -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.0/umd/Recharts.js"></script>
+
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body,#root{height:100%;background:#0B0F19}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Sora',sans-serif;overflow-x:hidden}
+    ::-webkit-scrollbar{width:3px}
+    ::-webkit-scrollbar-thumb{background:#252D3F;border-radius:4px}
+    input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+    input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.5)}
+    select option{background:#1C2236;color:#F0F4FF}
+    @media(prefers-color-scheme:dark){meta[name=theme-color]{content:#0B0F19}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+// ── Service Worker ────────────────────────────────────────────────────────
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js")
+      .then(r => console.log("SW registrado:", r.scope))
+      .catch(e => console.warn("SW falhou:", e));
+  });
+}
+
+// ── Install prompt (Android/Chrome) ───────────────────────────────────────
+let _deferredPrompt = null;
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  _deferredPrompt = e;
+  // Dispara evento customizado para o React capturar
+  window.dispatchEvent(new CustomEvent("pwa-installable"));
+});
+window.addEventListener("appinstalled", () => {
+  _deferredPrompt = null;
+  window.dispatchEvent(new CustomEvent("pwa-installed"));
+});
+window._installApp = async () => {
+  if (!_deferredPrompt) return false;
+  _deferredPrompt.prompt();
+  const { outcome } = await _deferredPrompt.userChoice;
+  _deferredPrompt = null;
+  return outcome === "accepted";
+};
+</script>
+
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+const {PieChart,Pie,Cell,BarChart,Bar,XAxis,YAxis,Tooltip,ResponsiveContainer}=Recharts;
+
+
+const C = {
+  bg:"#0B0F19",surface:"#141824",surface2:"#1C2236",border:"#252D3F",
+  accent:"#00D97E",accentDim:"#00D97E1A",
+  danger:"#FF5C6A",dangerDim:"#FF5C6A1A",
+  warning:"#FFB800",warningDim:"#FFB8001A",
+  purple:"#A78BFA",purpleDim:"#A78BFA1A",
+  text:"#F0F4FF",muted:"#6B7A99",card:"#161C2D",
+};
+
+const CATS = [
+  {name:"Alimentação",icon:"🍔",color:"#FF6B6B"},{name:"Transporte",icon:"🚗",color:"#4ECDC4"},
+  {name:"Moradia",icon:"🏠",color:"#45B7D1"},{name:"Saúde",icon:"💊",color:"#96CEB4"},
+  {name:"Lazer",icon:"🎮",color:"#FFEAA7"},{name:"Educação",icon:"📚",color:"#DDA0DD"},
+  {name:"Vestuário",icon:"👕",color:"#F0A500"},{name:"Empréstimo",icon:"🏦",color:"#A78BFA"},
+  {name:"Outros",icon:"📦",color:"#8892A4"},{name:"Renda",icon:"💰",color:"#00D97E"},
+];
+const SAMPLE_EXPENSES = [
+  {id:1,amount:450,category:"Alimentação",desc:"Supermercado",date:"2026-05-20",type:"expense"},
+  {id:2,amount:180,category:"Transporte",desc:"Uber + Gasolina",date:"2026-05-18",type:"expense"},
+  {id:3,amount:1200,category:"Moradia",desc:"Aluguel",date:"2026-05-05",type:"expense"},
+  {id:4,amount:89,category:"Lazer",desc:"Streamings",date:"2026-05-10",type:"expense"},
+  {id:5,amount:320,category:"Saúde",desc:"Farmácia",date:"2026-05-15",type:"expense"},
+  {id:6,amount:5800,category:"Renda",desc:"Salário maio",date:"2026-05-01",type:"income"},
+  {id:7,amount:230,category:"Alimentação",desc:"Restaurantes",date:"2026-05-22",type:"expense"},
+];
+const SAMPLE_LOANS = [
+  {id:201,name:"Empréstimo Pessoal",bank:"Banco do Brasil",totalAmount:12000,installments:24,
+   rate:1.8,startDate:"2026-01-10",paidCount:4,notes:"Reforma do apartamento",active:true},
+  {id:202,name:"Financiamento Moto",bank:"Santander",totalAmount:8500,installments:36,
+   rate:1.2,startDate:"2025-10-05",paidCount:7,notes:"Honda CG 160",active:true},
+];
+const DEFAULT_SETTINGS = {
+  monthlyIncome:5800,savingsGoal:1000,alertThreshold:500,invoiceAlert:2000,
+  creditCard:{closingDay:10,dueDay:20},brapiToken:"",
+};
+const STORAGE_KEY = "financalivre_v4";
+const CRYPTO_CACHE_KEY = "fl_crypto_cache";
+const MONTHS_PT = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+
+// ── Segurança ────────────────────────────────────────────────────────────────
+const sanitize = (s,max=120) => String(s||"").replace(/[<>"'`]/g,"").trim().slice(0,max);
+const safeNum  = (v,max=9999999) => { const n=parseFloat(v); return (isFinite(n)&&n>0&&n<=max)?n:null; };
+const safeInt  = (v,min=1,max=600) => { const n=parseInt(v); return (isFinite(n)&&n>=min&&n<=max)?n:null; };
+const safeDate = s => (/^\d{4}-\d{2}-\d{2}$/.test(s)&&!isNaN(new Date(s+"T12:00")))?s:null;
+const calcPMT  = (pv,r,n) => { const nN=Number(n)||1; if(nN<=0)return 0; const rN=Number(r)||0; return rN===0?Number(pv)/nN:Number(pv)*(rN/100)/(1-Math.pow(1+rN/100,-nN)); };
+const validateCloud = d => {
+  if(!d||typeof d!=="object") return null;
+  return {
+    expenses: Array.isArray(d.expenses)?d.expenses.filter(e=>e&&typeof e.amount==="number"&&e.date&&e.type):null,
+    loans:    Array.isArray(d.loans)?d.loans.filter(l=>l&&typeof l.totalAmount==="number"&&l.installments>0):null,
+    settings: (d.settings&&typeof d.settings==="object")?d.settings:null,
+    users:    Array.isArray(d.users)?d.users:null,
+  };
+};
+
+// ── Cloud ────────────────────────────────────────────────────────────────────
+async function cloudSave(data) {
+  try { const p=JSON.stringify(data); if(p.length>4000000)return false; await window.storage.set(STORAGE_KEY,p); return true; }
+  catch { return false; }
+}
+async function cloudLoad() {
+  try { const r=await window.storage.get(STORAGE_KEY); return r?validateCloud(JSON.parse(r.value)):null; }
+  catch { return null; }
+}
+
+// ── Crypto cache ──────────────────────────────────────────────────────────────
+function getCryptoCache() {
+  try { const c=JSON.parse(sessionStorage.getItem(CRYPTO_CACHE_KEY)||"null"); if(c&&Date.now()-c.ts<90000)return c; }
+  catch{}; return null;
+}
+function setCryptoCache(data) {
+  try { sessionStorage.setItem(CRYPTO_CACHE_KEY,JSON.stringify({data,ts:Date.now()})); } catch{}
+}
+
+// ── Fonte ────────────────────────────────────────────────────────────────────
+function useFont() {
+  useEffect(()=>{
+    if(document.getElementById("fl-fonts"))return;
+    const l=document.createElement("link"); l.id="fl-fonts"; l.rel="stylesheet";
+    l.href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap";
+    document.head.appendChild(l);
+    const s=document.createElement("style");
+    s.textContent="*{box-sizing:border-box;margin:0;padding:0}body,input,select,button{font-family:Sora,sans-serif}::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:#252D3F;border-radius:4px}input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.5)}";
+    document.head.appendChild(s);
+  },[]);
+}
+
+// ── Formatação ────────────────────────────────────────────────────────────────
+const fmtBRL  = v => new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
+const fmtPct  = v => `${v>=0?"+":""}${Number(v).toFixed(2)}%`;
+const fmtDate = d => { try{return new Date(d+"T12:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"short"});}catch{return d;} };
+
+// ── Componentes base ─────────────────────────────────────────────────────────
+const Card    = ({children,style})=><div style={{background:C.card,borderRadius:14,padding:14,border:`1px solid ${C.border}`,...style}}>{children}</div>;
+const Badge   = ({children,color})=><span style={{background:color+"28",color,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{children}</span>;
+const TxtInp  = ({label,error,...p})=>(
+  <div style={{marginBottom:12}}>
+    {label&&<p style={{color:error?C.danger:C.muted,fontSize:10,fontWeight:700,marginBottom:4,letterSpacing:.8}}>{label}</p>}
+    <input {...p} style={{width:"100%",background:C.surface2,border:`1px solid ${error?C.danger:C.border}`,borderRadius:10,padding:"11px 14px",color:C.text,fontSize:14,outline:"none",fontFamily:"inherit",...p.style}}/>
+    {error&&<p style={{color:C.danger,fontSize:11,marginTop:3}}>{error}</p>}
+  </div>
+);
+const PBtn = ({children,onClick,bg=C.accent,tc="#0B2D1E",disabled,style})=>(
+  <button onClick={onClick} disabled={disabled} style={{width:"100%",background:disabled?"#2a2a2a":bg,border:"none",borderRadius:11,padding:"13px",color:disabled?C.muted:tc,fontWeight:700,fontSize:14,cursor:disabled?"not-allowed":"pointer",fontFamily:"inherit",opacity:disabled?.7:1,...style}}>{children}</button>
+);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TELA: LOGIN / CADASTRO / RECUPERAR SENHA
+// ══════════════════════════════════════════════════════════════════════════════
+function AuthScreen({users,setUsers,onLogin}) {
+  useFont();
+  const [mode,setMode] = useState("login"); // login | register | forgot
+  const [name,setName] = useState("");
+  const [email,setEmail] = useState("");
+  const [pass,setPass]  = useState("");
+  const [pass2,setPass2]= useState("");
+  const [err,setErr]    = useState("");
+  const [info,setInfo]  = useState("");
+
+  const resetFields = () => { setErr(""); setInfo(""); };
+
+  const doLogin = () => {
+    resetFields();
+    const e=sanitize(email,100), p=sanitize(pass,80);
+    if(!e||!p){setErr("Preencha todos os campos.");return;}
+    // Demo account
+    if(e==="demo@financa.app"&&p==="123456"){onLogin({name:"Usuário Demo",email:e,uid:"demo"});return;}
+    const found = users.find(u=>u.email===e&&u.pass===btoa(p));
+    if(!found){setErr("E-mail ou senha incorretos.");return;}
+    onLogin(found);
+  };
+
+  const doRegister = () => {
+    resetFields();
+    const n=sanitize(name,60), e=sanitize(email,100), p=sanitize(pass,80), p2=sanitize(pass2,80);
+    if(!n||!e||!p||!p2){setErr("Preencha todos os campos.");return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){setErr("E-mail inválido.");return;}
+    if(p.length<6){setErr("Senha deve ter ao menos 6 caracteres.");return;}
+    if(p!==p2){setErr("As senhas não coincidem.");return;}
+    if(users.find(u=>u.email===e)){setErr("Este e-mail já está cadastrado.");return;}
+    const newUser={uid:`u_${Date.now()}`,name:n,email:e,pass:btoa(p)};
+    setUsers(prev=>[...prev,newUser]);
+    onLogin(newUser);
+  };
+
+  const doForgot = () => {
+    resetFields();
+    const e=sanitize(email,100);
+    if(!e){setErr("Digite seu e-mail.");return;}
+    const found=users.find(u=>u.email===e);
+    if(found) setInfo(`Senha cadastrada encontrada. Acesse com a senha que você definiu no cadastro.\n(Em uma versão hospedada com Firebase, um e-mail de recuperação seria enviado para ${e})`);
+    else setErr("E-mail não encontrado.");
+  };
+
+  const logo = (
+    <div style={{textAlign:"center",marginBottom:32}}>
+      <div style={{width:64,height:64,borderRadius:20,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 12px"}}>💰</div>
+      <h1 style={{color:C.text,fontSize:24,fontWeight:800}}>FinançaLivre</h1>
+      <p style={{color:C.muted,fontSize:13,marginTop:4}}>Controle total do seu dinheiro</p>
+    </div>
+  );
+
+  const tabs = (
+    <div style={{display:"flex",gap:6,marginBottom:20}}>
+      {[["login","Entrar"],["register","Criar conta"]].map(([m,l])=>(
+        <button key={m} onClick={()=>{setMode(m);resetFields();}} style={{flex:1,background:mode===m?C.accent:C.surface2,color:mode===m?"#0B2D1E":C.muted,border:"none",borderRadius:10,padding:"10px",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      {logo}
+      <div style={{width:"100%",maxWidth:360}}>
+        {mode!=="forgot" && tabs}
+
+        {mode==="login" && <>
+          <TxtInp label="E-MAIL" value={email} onChange={e=>setEmail(e.target.value)} maxLength={100} placeholder="seu@email.com"/>
+          <TxtInp label="SENHA" type="password" value={pass} onChange={e=>setPass(e.target.value)} maxLength={80} placeholder="••••••••"/>
+          {err&&<p style={{color:C.danger,fontSize:12,textAlign:"center",marginBottom:10}}>{err}</p>}
+          <PBtn onClick={doLogin} style={{marginBottom:10}}>Entrar</PBtn>
+          <button onClick={()=>{setMode("forgot");resetFields();}} style={{background:"none",border:"none",color:C.muted,fontSize:12,cursor:"pointer",width:"100%",padding:"6px",fontFamily:"inherit"}}>Esqueci minha senha</button>
+          <div style={{background:C.accentDim,border:`1px solid ${C.accent}25`,borderRadius:10,padding:10,marginTop:12,textAlign:"center"}}>
+            <p style={{color:C.accent,fontSize:11}}>Demo: demo@financa.app / 123456</p>
+          </div>
+        </>}
+
+        {mode==="register" && <>
+          <TxtInp label="SEU NOME" value={name} onChange={e=>setName(e.target.value)} maxLength={60} placeholder="Ex: João Silva"/>
+          <TxtInp label="E-MAIL" value={email} onChange={e=>setEmail(e.target.value)} maxLength={100} placeholder="seu@email.com"/>
+          <TxtInp label="SENHA (mín. 6 caracteres)" type="password" value={pass} onChange={e=>setPass(e.target.value)} maxLength={80} placeholder="••••••••"/>
+          <TxtInp label="CONFIRMAR SENHA" type="password" value={pass2} onChange={e=>setPass2(e.target.value)} maxLength={80} placeholder="••••••••"/>
+          {err&&<p style={{color:C.danger,fontSize:12,textAlign:"center",marginBottom:10}}>{err}</p>}
+          <PBtn onClick={doRegister}>Criar Conta</PBtn>
+        </>}
+
+        {mode==="forgot" && <>
+          <button onClick={()=>{setMode("login");resetFields();}} style={{background:"none",border:"none",color:C.accent,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:16,display:"flex",alignItems:"center",gap:4}}>← Voltar</button>
+          <p style={{color:C.text,fontWeight:700,fontSize:16,marginBottom:16}}>Recuperar senha</p>
+          <TxtInp label="E-MAIL CADASTRADO" value={email} onChange={e=>setEmail(e.target.value)} maxLength={100} placeholder="seu@email.com"/>
+          {err&&<p style={{color:C.danger,fontSize:12,marginBottom:10}}>{err}</p>}
+          {info&&<div style={{background:C.accentDim,border:`1px solid ${C.accent}30`,borderRadius:10,padding:12,marginBottom:12}}><p style={{color:C.accent,fontSize:12,lineHeight:1.5}}>{info}</p></div>}
+          <PBtn onClick={doForgot}>Verificar e-mail</PBtn>
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HOME
+// ══════════════════════════════════════════════════════════════════════════════
+function HomeTab({expenses,loans,settings}) {
+  const now=new Date(),mm=now.getMonth(),yy=now.getFullYear();
+  const inM=e=>{try{const d=new Date(e.date);return d.getMonth()===mm&&d.getFullYear()===yy;}catch{return false;}};
+  const loanMth=loans.filter(l=>l.active).reduce((s,l)=>{
+    const start=new Date(l.startDate+"T12:00"),idx=(yy-start.getFullYear())*12+(mm-start.getMonth());
+    return(idx>=0&&idx<l.installments&&idx>=l.paidCount)?s+calcPMT(l.totalAmount,l.rate,l.installments):s;
+  },0);
+  const spent  = expenses.filter(e=>inM(e)&&e.type==="expense").reduce((s,e)=>s+e.amount,0)+loanMth;
+  const income = expenses.filter(e=>inM(e)&&e.type==="income").reduce((s,e)=>s+e.amount,0);
+  const saved  = income-spent;
+  const pct    = settings.savingsGoal>0?Math.min(100,Math.max(0,(saved/settings.savingsGoal)*100)):0;
+  const totalDebt=loans.filter(l=>l.active).reduce((s,l)=>s+calcPMT(l.totalAmount,l.rate,l.installments)*(l.installments-l.paidCount),0);
+  const alerts=[];
+  if(spent>settings.invoiceAlert) alerts.push({t:"danger",m:`Fatura alta! ${fmtBRL(spent)} gastos este mês.`});
+  if(saved<0) alerts.push({t:"danger",m:`Gastos superaram a renda em ${fmtBRL(Math.abs(saved))}.`});
+  if(saved>=0&&saved<settings.savingsGoal) alerts.push({t:"warning",m:`Faltam ${fmtBRL(settings.savingsGoal-saved)} para sua meta.`});
+  const catTotals={};
+  expenses.filter(e=>inM(e)&&e.type==="expense").forEach(e=>{catTotals[e.category]=(catTotals[e.category]||0)+e.amount;});
+  Object.entries(catTotals).forEach(([cat,total])=>{
+    if(total>settings.alertThreshold){const c=CATS.find(x=>x.name===cat);alerts.push({t:"warning",m:`${c?.icon||""} ${cat} acima do limite: ${fmtBRL(total)}`});}
+  });
+  const recent=[...expenses].filter(e=>e.type==="expense").sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5);
+  return(
+    <div style={{padding:"0 14px 24px"}}>
+      <div style={{background:"linear-gradient(135deg,#00C46E,#0096A0)",borderRadius:20,padding:"22px 20px",marginBottom:14,position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:-20,right:-20,width:100,height:100,borderRadius:"50%",background:"rgba(255,255,255,.07)"}}/>
+        <p style={{color:"rgba(0,30,15,.6)",fontSize:11,fontWeight:700,letterSpacing:1}}>SALDO DO MÊS</p>
+        <h2 style={{color:"#072515",fontSize:30,fontWeight:800,margin:"6px 0 14px",fontFamily:"'DM Mono',monospace"}}>{fmtBRL(saved)}</h2>
+        <div style={{display:"flex",gap:24}}>
+          {[["ENTRADAS",income,"↑"],["SAÍDAS",spent,"↓"]].map(([l,v,a])=>(
+            <div key={l}><p style={{color:"rgba(0,30,15,.5)",fontSize:10,fontWeight:700}}>{l}</p>
+            <p style={{color:"#072515",fontWeight:700,fontSize:13,fontFamily:"'DM Mono',monospace"}}>{a} {fmtBRL(v)}</p></div>
+          ))}
+        </div>
+      </div>
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div><p style={{color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1}}>META DE ECONOMIA</p>
+          <p style={{color:C.text,fontWeight:700,fontSize:14,marginTop:2}}>{fmtBRL(saved)} / {fmtBRL(settings.savingsGoal)}</p></div>
+          <Badge color={pct>=100?C.accent:C.warning}>{Math.round(pct)}%</Badge>
+        </div>
+        <div style={{background:C.surface2,borderRadius:6,height:7,overflow:"hidden"}}>
+          <div style={{width:`${pct}%`,height:"100%",background:pct>=100?C.accent:C.warning,borderRadius:6,transition:"width .5s"}}/>
+        </div>
+      </Card>
+      {totalDebt>0&&(
+        <Card style={{marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><p style={{color:C.muted,fontSize:10,fontWeight:700,letterSpacing:1}}>DÍVIDA TOTAL ATIVA</p>
+            <p style={{color:C.purple,fontWeight:800,fontSize:20,marginTop:2,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(totalDebt)}</p></div>
+            <div style={{textAlign:"right"}}><p style={{color:C.muted,fontSize:10}}>Parcelas este mês</p>
+            <p style={{color:C.text,fontWeight:700,fontSize:14,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(loanMth)}</p></div>
+          </div>
+        </Card>
+      )}
+      {alerts.slice(0,4).map((a,i)=>(
+        <div key={i} style={{background:a.t==="danger"?C.dangerDim:C.warningDim,border:`1px solid ${a.t==="danger"?C.danger:C.warning}35`,borderRadius:10,padding:"10px 13px",marginBottom:8,display:"flex",gap:8,alignItems:"flex-start"}}>
+          <span>{a.t==="danger"?"🚨":"⚠️"}</span>
+          <p style={{color:a.t==="danger"?C.danger:C.warning,fontSize:12,fontWeight:500,lineHeight:1.4,flex:1}}>{a.m}</p>
+        </div>
+      ))}
+      <p style={{color:C.text,fontWeight:700,fontSize:14,margin:"14px 0 10px"}}>Últimos gastos</p>
+      {recent.length===0&&<Card><p style={{color:C.muted,fontSize:13,textAlign:"center",padding:16}}>Nenhum gasto registrado ainda.</p></Card>}
+      {recent.map(e=>{const cat=CATS.find(c=>c.name===e.category);return(
+        <Card key={e.id} style={{marginBottom:8,padding:"11px 13px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:36,height:36,borderRadius:10,background:(cat?.color||"#888")+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{cat?.icon||"📦"}</div>
+              <div><p style={{color:C.text,fontSize:13,fontWeight:600}}>{e.desc}</p><p style={{color:C.muted,fontSize:11}}>{e.category} · {fmtDate(e.date)}</p></div>
+            </div>
+            <p style={{color:C.danger,fontWeight:700,fontSize:13,fontFamily:"'DM Mono',monospace"}}>-{fmtBRL(e.amount)}</p>
+          </div>
+        </Card>
+      );})}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GASTOS
+// ══════════════════════════════════════════════════════════════════════════════
+function GastosTab({expenses,setExpenses}) {
+  const [modal,setModal]=useState(false);
+  const [filter,setFilter]=useState("all");
+  const blank={amount:"",category:"Alimentação",desc:"",date:new Date().toISOString().split("T")[0],type:"expense"};
+  const [form,setForm]=useState(blank);
+  const [errs,setErrs]=useState({});
+  const f=(k,v)=>{setForm(p=>({...p,[k]:v}));setErrs(p=>({...p,[k]:""}));};
+  const validate=()=>{const e={};if(!safeNum(form.amount))e.amount="Valor inválido";if(!sanitize(form.desc,120))e.desc="Descrição obrigatória";if(!safeDate(form.date))e.date="Data inválida";setErrs(e);return!Object.keys(e).length;};
+  const add=()=>{if(!validate())return;setExpenses(p=>[{...form,id:Date.now(),amount:safeNum(form.amount),desc:sanitize(form.desc,120)},...p]);setModal(false);setForm(blank);setErrs({});};
+  const remove=id=>setExpenses(p=>p.filter(e=>e.id!==id));
+  const list=expenses.filter(e=>filter==="all"||e.type===filter).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  return(
+    <div style={{padding:"0 14px 24px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{display:"flex",gap:6}}>
+          {[["all","Todos"],["expense","Gastos"],["income","Renda"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setFilter(v)} style={{background:filter===v?C.accent:C.surface2,color:filter===v?"#0B2D1E":C.muted,border:"none",borderRadius:8,padding:"6px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+          ))}
+        </div>
+        <button onClick={()=>setModal(true)} style={{background:C.accent,border:"none",borderRadius:10,width:36,height:36,fontSize:22,cursor:"pointer",color:"#0B2D1E",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+      </div>
+      {list.length===0&&<Card><p style={{color:C.muted,fontSize:13,textAlign:"center",padding:16}}>Nenhum lançamento encontrado.</p></Card>}
+      {list.map(e=>{const cat=CATS.find(c=>c.name===e.category);return(
+        <Card key={e.id} style={{marginBottom:8,padding:"11px 13px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:36,height:36,borderRadius:10,background:(cat?.color||"#888")+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{cat?.icon||"📦"}</div>
+              <div><p style={{color:C.text,fontSize:13,fontWeight:600}}>{e.desc}</p><p style={{color:C.muted,fontSize:11}}>{e.category} · {fmtDate(e.date)}</p></div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <p style={{color:e.type==="income"?C.accent:C.danger,fontWeight:700,fontSize:13,fontFamily:"'DM Mono',monospace"}}>{e.type==="income"?"+":"-"}{fmtBRL(e.amount)}</p>
+              <button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,lineHeight:1}}>×</button>
+            </div>
+          </div>
+        </Card>
+      );})}
+      {modal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setModal(false)}>
+          <div style={{width:"100%",background:C.surface,borderRadius:"20px 20px 0 0",padding:24}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h3 style={{color:C.text,fontWeight:700,fontSize:16}}>Adicionar Lançamento</h3>
+              <button onClick={()=>setModal(false)} style={{background:C.surface2,border:"none",borderRadius:8,width:28,height:28,color:C.muted,cursor:"pointer",fontSize:16}}>×</button>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:14}}>
+              {[["expense","💸 Gasto"],["income","💰 Renda"]].map(([t,l])=>(
+                <button key={t} onClick={()=>f("type",t)} style={{flex:1,background:form.type===t?(t==="expense"?C.danger:C.accent):C.surface2,color:form.type===t?"#fff":C.muted,border:"none",borderRadius:10,padding:11,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+              ))}
+            </div>
+            <TxtInp label="VALOR (R$)" type="number" placeholder="0,00" value={form.amount} onChange={e=>f("amount",e.target.value)} error={errs.amount} style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:700}} min="0" max="9999999"/>
+            <TxtInp label="DESCRIÇÃO" placeholder="Ex: Supermercado" value={form.desc} onChange={e=>f("desc",e.target.value)} error={errs.desc} maxLength={120}/>
+            <div style={{display:"flex",gap:10,marginBottom:14}}>
+              <div style={{flex:1}}>
+                <p style={{color:C.muted,fontSize:10,fontWeight:700,marginBottom:4}}>CATEGORIA</p>
+                <select value={form.category} onChange={e=>f("category",e.target.value)} style={{width:"100%",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 10px",color:C.text,fontSize:13,outline:"none",fontFamily:"inherit"}}>
+                  {CATS.filter(c=>form.type==="income"?c.name==="Renda":c.name!=="Renda").map(c=><option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}
+                </select>
+              </div>
+              <div style={{flex:1}}>
+                <p style={{color:errs.date?C.danger:C.muted,fontSize:10,fontWeight:700,marginBottom:4}}>DATA</p>
+                <input type="date" value={form.date} onChange={e=>f("date",e.target.value)} style={{width:"100%",background:C.surface2,border:`1px solid ${errs.date?C.danger:C.border}`,borderRadius:10,padding:"11px 10px",color:C.text,fontSize:13,outline:"none",fontFamily:"inherit"}}/>
+              </div>
+            </div>
+            <PBtn onClick={add}>Salvar Lançamento</PBtn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EMPRÉSTIMOS
+// ══════════════════════════════════════════════════════════════════════════════
+function EmprestimosTab({loans,setLoans}) {
+  const [modal,setModal]=useState(false);
+  const blank={name:"",bank:"",totalAmount:"",installments:"",rate:"",startDate:new Date().toISOString().split("T")[0],notes:""};
+  const [form,setForm]=useState(blank);
+  const [errs,setErrs]=useState({});
+  const f=(k,v)=>{setForm(p=>({...p,[k]:v}));setErrs(p=>({...p,[k]:""}));};
+  const validate=()=>{const e={};if(!sanitize(form.name,80))e.name="Nome obrigatório";if(!safeNum(form.totalAmount,9e6))e.totalAmount="Valor inválido";if(!safeInt(form.installments,1,600))e.installments="Parcelas inválidas (1–600)";if(form.rate!==""&&(isNaN(parseFloat(form.rate))||parseFloat(form.rate)<0||parseFloat(form.rate)>30))e.rate="Taxa inválida (0–30%)";if(!safeDate(form.startDate))e.startDate="Data inválida";setErrs(e);return!Object.keys(e).length;};
+  const add=()=>{if(!validate())return;setLoans(p=>[{id:Date.now(),name:sanitize(form.name,80),bank:sanitize(form.bank,80),totalAmount:safeNum(form.totalAmount,9e6),installments:safeInt(form.installments,1,600),rate:Math.max(0,parseFloat(form.rate||"0")),startDate:form.startDate,paidCount:0,notes:sanitize(form.notes,200),active:true},...p]);setModal(false);setForm(blank);setErrs({});};
+  const payNext=id=>setLoans(p=>p.map(l=>{if(l.id!==id)return l;const next=l.paidCount+1;return{...l,paidCount:next,active:next<l.installments};}));
+  const remove=id=>setLoans(p=>p.filter(l=>l.id!==id));
+  const totalDebt=loans.filter(l=>l.active).reduce((s,l)=>s+calcPMT(l.totalAmount,l.rate,l.installments)*(l.installments-l.paidCount),0);
+  const estPMT=(form.totalAmount&&form.installments&&!errs.totalAmount&&!errs.installments)?calcPMT(parseFloat(form.totalAmount)||0,parseFloat(form.rate||"0"),parseInt(form.installments)||1):null;
+  return(
+    <div style={{padding:"0 14px 24px"}}>
+      {loans.length>0&&(
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          {[["DÍVIDA TOTAL",fmtBRL(totalDebt),C.purple],["ATIVOS / QUITADOS",`${loans.filter(l=>l.active).length} / ${loans.filter(l=>!l.active).length}`,C.text]].map(([l,v,col])=>(
+            <Card key={l} style={{flex:1,padding:"12px 14px"}}><p style={{color:C.muted,fontSize:10,fontWeight:700,marginBottom:4}}>{l}</p><p style={{color:col,fontWeight:800,fontSize:15,fontFamily:"'DM Mono',monospace"}}>{v}</p></Card>
+          ))}
+        </div>
+      )}
+      <button onClick={()=>setModal(true)} style={{width:"100%",background:C.purple,border:"none",borderRadius:12,padding:"13px",color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>🏦 Cadastrar Novo Empréstimo</button>
+      {loans.length===0&&<Card><p style={{color:C.muted,fontSize:14,textAlign:"center",padding:"24px 0",lineHeight:2}}>Nenhum empréstimo cadastrado.<br/><span style={{fontSize:12}}>Toque no botão acima para adicionar.</span></p></Card>}
+      {loans.map(loan=>{
+        const inst=calcPMT(loan.totalAmount,loan.rate,loan.installments),remaining=loan.installments-loan.paidCount,pct=Math.round((loan.paidCount/loan.installments)*100);
+        return(
+          <Card key={loan.id} style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{fontSize:18}}>🏦</span><p style={{color:C.text,fontWeight:700,fontSize:15}}>{loan.name}</p></div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>{loan.bank&&<p style={{color:C.muted,fontSize:11}}>{loan.bank}</p>}<Badge color={loan.active?C.purple:C.accent}>{loan.active?"Ativo":"Quitado ✓"}</Badge></div></div>
+              <button onClick={()=>remove(loan.id)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1}}>×</button>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              {[["Parcela",fmtBRL(inst),C.purple],["Restante",fmtBRL(inst*remaining),C.warning],["Total",fmtBRL(loan.totalAmount),C.muted]].map(([l,v,col])=>(
+                <div key={l} style={{flex:1,background:C.surface2,borderRadius:10,padding:"8px 10px"}}><p style={{color:C.muted,fontSize:10,fontWeight:700,marginBottom:2}}>{l}</p><p style={{color:col,fontWeight:700,fontSize:12,fontFamily:"'DM Mono',monospace"}}>{v}</p></div>
+              ))}
+            </div>
+            <div style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><p style={{color:C.muted,fontSize:11}}>{loan.paidCount} de {loan.installments} parcelas pagas</p><p style={{color:C.purple,fontSize:11,fontWeight:700}}>{pct}%</p></div>
+              <div style={{background:C.surface2,borderRadius:6,height:8,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:C.purple,borderRadius:6,transition:"width .5s"}}/></div>
+            </div>
+            {loan.rate>0&&<p style={{color:C.muted,fontSize:11,marginBottom:6}}>Taxa: {loan.rate}% a.m.</p>}
+            {loan.notes&&<p style={{color:C.muted,fontSize:11,marginBottom:8,fontStyle:"italic"}}>{loan.notes}</p>}
+            {loan.active&&<button onClick={()=>payNext(loan.id)} style={{width:"100%",background:C.purpleDim,border:`1.5px solid ${C.purple}`,borderRadius:10,padding:"11px",color:C.purple,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>✓ Pagar parcela {loan.paidCount+1}/{loan.installments}</button>}
+          </Card>
+        );
+      })}
+      {modal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setModal(false)}>
+          <div style={{width:"100%",background:C.surface,borderRadius:"20px 20px 0 0",padding:24,maxHeight:"88vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h3 style={{color:C.text,fontWeight:700,fontSize:16}}>🏦 Novo Empréstimo</h3>
+              <button onClick={()=>setModal(false)} style={{background:C.surface2,border:"none",borderRadius:8,width:28,height:28,color:C.muted,cursor:"pointer",fontSize:16}}>×</button>
+            </div>
+            <TxtInp label="NOME DO EMPRÉSTIMO *" placeholder="Ex: Empréstimo pessoal" value={form.name} onChange={e=>f("name",e.target.value)} error={errs.name} maxLength={80}/>
+            <TxtInp label="BANCO / CREDOR" placeholder="Ex: Caixa Econômica" value={form.bank} onChange={e=>f("bank",e.target.value)} maxLength={80}/>
+            <TxtInp label="VALOR TOTAL (R$) *" type="number" placeholder="0,00" value={form.totalAmount} onChange={e=>f("totalAmount",e.target.value)} error={errs.totalAmount} style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:16}} min="1" max="9000000"/>
+            <div style={{display:"flex",gap:10}}>
+              <div style={{flex:1}}><TxtInp label="Nº DE PARCELAS *" type="number" placeholder="12" value={form.installments} onChange={e=>f("installments",e.target.value)} error={errs.installments} style={{fontFamily:"'DM Mono',monospace"}} min="1" max="600"/></div>
+              <div style={{flex:1}}><TxtInp label="TAXA MENSAL (%)" type="number" placeholder="0,00" value={form.rate} onChange={e=>f("rate",e.target.value)} error={errs.rate} style={{fontFamily:"'DM Mono',monospace"}} min="0" max="30" step="0.1"/></div>
+            </div>
+            <TxtInp label="DATA 1ª PARCELA *" type="date" value={form.startDate} onChange={e=>f("startDate",e.target.value)} error={errs.startDate}/>
+            {estPMT&&<div style={{background:C.purpleDim,border:`1px solid ${C.purple}40`,borderRadius:10,padding:14,marginBottom:14,textAlign:"center"}}><p style={{color:C.muted,fontSize:11,marginBottom:4}}>PARCELA ESTIMADA</p><p style={{color:C.purple,fontWeight:800,fontSize:24,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(estPMT)}</p></div>}
+            <TxtInp label="OBSERVAÇÕES" placeholder="Ex: Reforma da casa" value={form.notes} onChange={e=>f("notes",e.target.value)} maxLength={200}/>
+            <PBtn onClick={add} bg={C.purple} tc="#fff">Cadastrar Empréstimo</PBtn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RELATÓRIOS
+// ══════════════════════════════════════════════════════════════════════════════
+function RelatoriosTab({expenses,loans}) {
+  const now=new Date(),mm=now.getMonth(),yy=now.getFullYear();
+  const TT={background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12};
+  const monthExp=expenses.filter(e=>{try{const d=new Date(e.date+"T12:00");return d.getMonth()===mm&&d.getFullYear()===yy&&e.type==="expense";}catch{return false;}});
+  const catData=CATS.filter(c=>c.name!=="Renda").map(c=>({name:c.name,icon:c.icon,color:c.color,value:monthExp.filter(e=>e.category===c.name).reduce((s,e)=>s+e.amount,0)})).filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
+  const totalSpent=catData.reduce((s,c)=>s+c.value,0);
+  const trend=Array.from({length:6},(_,i)=>{
+    const d=new Date(yy,mm-5+i,1),mName=MONTHS_PT[d.getMonth()];
+    return{name:mName,Gastos:Math.round(expenses.filter(e=>{try{const ed=new Date(e.date+"T12:00");return ed.getMonth()===d.getMonth()&&ed.getFullYear()===d.getFullYear()&&e.type==="expense";}catch{return false;}}).reduce((s,e)=>s+e.amount,0)),Renda:Math.round(expenses.filter(e=>{try{const ed=new Date(e.date+"T12:00");return ed.getMonth()===d.getMonth()&&ed.getFullYear()===d.getFullYear()&&e.type==="income";}catch{return false;}}).reduce((s,e)=>s+e.amount,0))};
+  });
+  const totalDebt=loans.filter(l=>l.active).reduce((s,l)=>s+calcPMT(l.totalAmount,l.rate,l.installments)*(l.installments-l.paidCount),0);
+  return(
+    <div style={{padding:"0 14px 24px"}}>
+      <Card style={{marginBottom:14}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:12}}>Gastos por Categoria — {MONTHS_PT[mm]}</p>
+        {catData.length>0?(<>
+          <ResponsiveContainer width="100%" height={170}><PieChart><Pie data={catData} dataKey="value" cx="50%" cy="50%" outerRadius={72} innerRadius={42}>{catData.map((c,i)=><Cell key={i} fill={c.color}/>)}</Pie><Tooltip formatter={v=>fmtBRL(v)} contentStyle={TT}/></PieChart></ResponsiveContainer>
+          <div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",marginTop:4}}>{catData.map((c,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:2,background:c.color}}/><span style={{color:C.muted,fontSize:11}}>{c.icon} {c.name}</span></div>)}</div>
+        </>):<p style={{color:C.muted,fontSize:13,textAlign:"center",padding:24}}>Nenhum gasto este mês.</p>}
+      </Card>
+      <Card style={{marginBottom:14}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:12}}>Tendência — Últimos 6 Meses</p>
+        <ResponsiveContainer width="100%" height={150}><BarChart data={trend} margin={{top:0,right:0,bottom:0,left:-22}}><XAxis dataKey="name" tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><YAxis tick={{fill:C.muted,fontSize:10}} axisLine={false} tickLine={false}/><Tooltip formatter={v=>fmtBRL(v)} contentStyle={TT}/><Bar dataKey="Renda" fill="#00D97E30" radius={[4,4,0,0]}/><Bar dataKey="Gastos" fill={C.danger} radius={[4,4,0,0]} fillOpacity={0.85}/></BarChart></ResponsiveContainer>
+        <div style={{display:"flex",gap:14,marginTop:6}}>{[["Renda","#00D97E"],["Gastos",C.danger]].map(([l,col])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:10,height:10,borderRadius:2,background:col}}/><span style={{color:C.muted,fontSize:11}}>{l}</span></div>)}</div>
+      </Card>
+      {catData.length>0&&(
+        <Card style={{marginBottom:14}}>
+          <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:14}}>Detalhamento — {MONTHS_PT[mm]}</p>
+          {catData.map((c,i)=>{const p2=totalSpent>0?(c.value/totalSpent)*100:0;return(
+            <div key={i} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><span style={{color:C.text,fontSize:12}}>{c.icon} {c.name}</span><div style={{display:"flex",gap:8}}><span style={{color:C.muted,fontSize:11}}>{Math.round(p2)}%</span><span style={{color:C.text,fontSize:12,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(c.value)}</span></div></div>
+              <div style={{background:C.surface2,borderRadius:4,height:5,overflow:"hidden"}}><div style={{width:`${p2}%`,height:"100%",background:c.color,borderRadius:4,transition:"width .5s"}}/></div>
+            </div>
+          );})}
+          <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between"}}><span style={{color:C.muted,fontSize:13,fontWeight:600}}>Total do mês</span><span style={{color:C.danger,fontWeight:700,fontSize:14,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(totalSpent)}</span></div>
+        </Card>
+      )}
+      {loans.length>0&&(
+        <Card>
+          <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:14}}>🏦 Resumo de Dívidas</p>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>{[[`${loans.filter(l=>l.active).length} ativos`,C.purple],[`${fmtBRL(totalDebt)} restante`,C.warning]].map(([l,col])=><div key={l} style={{flex:1,background:col+"18",border:`1px solid ${col}30`,borderRadius:10,padding:"10px 12px",textAlign:"center"}}><p style={{color:col,fontWeight:700,fontSize:13}}>{l}</p></div>)}</div>
+          {loans.map(l=>{const inst=calcPMT(l.totalAmount,l.rate,l.installments),p3=Math.round((l.paidCount/l.installments)*100);return(
+            <div key={l.id} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:C.text,fontSize:12,fontWeight:600}}>{l.name}</span><span style={{color:C.purple,fontSize:12,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(inst)}/mês</span></div>
+              <div style={{background:C.surface2,borderRadius:4,height:5,overflow:"hidden",marginBottom:3}}><div style={{width:`${p3}%`,height:"100%",background:C.purple,borderRadius:4}}/></div>
+              <p style={{color:C.muted,fontSize:10}}>{l.paidCount}/{l.installments} parcelas · {p3}% quitado</p>
+            </div>
+          );})}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MERCADO — com cache e múltiplas APIs
+// ══════════════════════════════════════════════════════════════════════════════
+const CRYPTO_META=[
+  {id:"bitcoin", name:"Bitcoin", sym:"BTC",icon:"₿",col:"#F7931A"},
+  {id:"ethereum",name:"Ethereum",sym:"ETH",icon:"Ξ",col:"#627EEA"},
+  {id:"solana",  name:"Solana",  sym:"SOL",icon:"◎",col:"#9945FF"},
+  {id:"cardano", name:"Cardano", sym:"ADA",icon:"₳",col:"#0033AD"},
+  {id:"ripple",  name:"XRP",     sym:"XRP",icon:"✕",col:"#00AAE4"},
+];
+const B3_TICKERS=["PETR4","VALE3","ITUB4","BBDC4","MGLU3","WEGE3"];
+
+function MercadoTab({settings}) {
+  const token=sanitize(settings?.brapiToken||"",200).replace(/\s/g,"");
+  const [crypto,setCrypto]=useState(null);
+  const [stocks,setStocks]=useState([]);
+  const [cLoad,setCLoad]=useState(true);
+  const [sLoad,setSLoad]=useState(false);
+  const [sErr,setSErr]=useState("");
+  const [cStatus,setCStatus]=useState("loading"); // loading | live | cache | error
+  const [lastUpd,setLastUpd]=useState(null);
+  const [retryIn,setRetryIn]=useState(0);
+  const retryTimer=useRef(null);
+  const TT={background:C.surface,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12};
+
+  const loadCrypto=useCallback(()=>{
+    const cached=getCryptoCache();
+    if(cached){setCrypto(cached.data);setCStatus("cache");setLastUpd(new Date(cached.ts));setCLoad(false);return;}
+    setCLoad(true);setCStatus("loading");
+    fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,cardano,ripple&vs_currencies=brl&include_24hr_change=true",{headers:{"Accept":"application/json"}})
+      .then(r=>{
+        if(r.status===429){
+          // Rate limit — use fallback or cache
+          setCStatus("error");setRetryIn(60);setCLoad(false);
+          const t=setInterval(()=>setRetryIn(p=>{if(p<=1){clearInterval(t);loadCrypto();return 0;}return p-1;}),1000);
+          return null;
+        }
+        if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(d=>{
+        if(!d)return;
+        setCrypto(d);setCryptoCache(d);setCStatus("live");setLastUpd(new Date());setCLoad(false);
+      })
+      .catch(()=>{
+        // fallback hardcoded
+        const fallback={bitcoin:{brl:610000,brl_24h_change:1.2},ethereum:{brl:17800,brl_24h_change:-0.8},solana:{brl:930,brl_24h_change:3.1},cardano:{brl:3.90,brl_24h_change:0.5},ripple:{brl:12.80,brl_24h_change:-0.3}};
+        setCrypto(fallback);setCStatus("error");setLastUpd(new Date());setCLoad(false);
+      });
+  },[]);
+
+  const loadStocks=useCallback(()=>{
+    if(!token)return;setSLoad(true);setSErr("");
+    fetch(`https://brapi.dev/api/quote/${B3_TICKERS.join(",")}?token=${encodeURIComponent(token)}`)
+      .then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();})
+      .then(d=>{if(d.error){setSErr(d.message||"Erro Brapi.");setSLoad(false);return;}setStocks(d.results||[]);setSLoad(false);})
+      .catch(e=>{setSErr(`Falha: ${e.message||"verifique o token."}`);setSLoad(false);});
+  },[token]);
+
+  useEffect(()=>{loadCrypto();},[loadCrypto]);
+  useEffect(()=>{if(token)loadStocks();},[token,loadStocks]);
+
+  const statusColor={loading:C.muted,live:C.accent,cache:C.warning,error:C.danger}[cStatus];
+  const statusLabel={loading:"Carregando...",live:"Ao vivo ●",cache:"Cache (< 90s)",error:retryIn>0?`Limite atingido — tentando em ${retryIn}s`:"Dados offline"}[cStatus];
+
+  return(
+    <div style={{padding:"0 14px 24px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <p style={{color:statusColor,fontSize:11,fontWeight:600}}>{statusLabel}</p>
+        <button onClick={()=>{loadCrypto();loadStocks();}} style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 12px",color:C.accent,fontSize:11,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>↻ Atualizar</button>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14}}>🪙 Criptomoedas</p>
+        <Badge color={statusColor}>{cStatus==="live"?"Tempo real":cStatus==="cache"?"Em cache":"Offline"}</Badge>
+      </div>
+      {cLoad?<p style={{color:C.muted,fontSize:13,textAlign:"center",padding:20}}>Buscando cotações...</p>:(
+        CRYPTO_META.map(c=>{const d=crypto?.[c.id];const chg=d?.brl_24h_change||0;return(
+          <Card key={c.id} style={{marginBottom:8,padding:"11px 13px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:36,height:36,borderRadius:10,background:c.col+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:c.col,fontFamily:"'DM Mono',monospace"}}>{c.icon}</div>
+                <div><p style={{color:C.text,fontSize:13,fontWeight:600}}>{c.name}</p><p style={{color:C.muted,fontSize:11}}>{c.sym}</p></div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <p style={{color:C.text,fontWeight:700,fontSize:13,fontFamily:"'DM Mono',monospace"}}>{fmtBRL(d?.brl)}</p>
+                <Badge color={chg>=0?C.accent:C.danger}>{fmtPct(chg)}</Badge>
+              </div>
+            </div>
+          </Card>
+        );})
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"18px 0 10px"}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14}}>📈 Ações B3</p>
+        <Badge color={token?C.accent:C.warning}>{token?"Brapi ativo":"Configure o token"}</Badge>
+      </div>
+      {!token&&(
+        <Card><p style={{color:C.text,fontWeight:600,fontSize:13,marginBottom:10}}>🔑 Ativar cotações reais — 4 passos:</p>
+          {[["1","Acesse brapi.dev e crie conta gratuita (sem cartão)."],["2","No painel, copie o seu API Token."],["3","Vá em ⚙️ Configurações → campo Token Brapi B3."],["4","Cole o token e toque em Salvar. Pronto!"]].map(([n,t])=>(
+            <div key={n} style={{display:"flex",gap:10,marginBottom:10}}><div style={{minWidth:22,height:22,borderRadius:6,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#0B2D1E"}}>{n}</div><p style={{color:C.muted,fontSize:12,lineHeight:1.5}}>{t}</p></div>
+          ))}
+        </Card>
+      )}
+      {token&&sErr&&<div style={{background:C.dangerDim,border:`1px solid ${C.danger}35`,borderRadius:10,padding:"10px 13px",marginBottom:8}}><p style={{color:C.danger,fontSize:12}}>❌ {sErr}</p><p style={{color:C.muted,fontSize:11,marginTop:4}}>Verifique o token em ⚙️ Configurações.</p></div>}
+      {token&&sLoad&&<p style={{color:C.muted,fontSize:13,textAlign:"center",padding:20}}>Buscando cotações B3...</p>}
+      {token&&!sLoad&&stocks.map(s=>{const chg=s.regularMarketChangePercent||0;return(
+        <Card key={s.symbol} style={{marginBottom:8,padding:"11px 13px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:36,height:36,borderRadius:10,background:C.accentDim,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:C.accent,fontFamily:"'DM Mono',monospace"}}>{s.symbol.slice(0,4)}</div>
+              <div><p style={{color:C.text,fontSize:13,fontWeight:600}}>{s.symbol}</p><p style={{color:C.muted,fontSize:11}}>{sanitize(s.shortName||"",40)}</p></div>
+            </div>
+            <div style={{textAlign:"right"}}><p style={{color:C.text,fontWeight:700,fontSize:13,fontFamily:"'DM Mono',monospace"}}>R$ {(s.regularMarketPrice||0).toFixed(2)}</p><Badge color={chg>=0?C.accent:C.danger}>{fmtPct(chg)}</Badge></div>
+          </div>
+        </Card>
+      );})}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════════════════════════════
+function ConfigTab({settings,setSettings}) {
+  const [s,setS]=useState(settings);
+  const [ok,setOk]=useState(false);
+  useEffect(()=>{setS(settings);},[settings]);
+  const save=()=>{setSettings(s);setOk(true);setTimeout(()=>setOk(false),2200);};
+  const upd=(k,v)=>setS(p=>({...p,[k]:v}));
+  const updCC=(k,v)=>setS(p=>({...p,creditCard:{...p.creditCard,[k]:v}}));
+  const {closingDay}=s.creditCard;
+  const days=Array.from({length:31},(_,i)=>{const d=i+1,dl=d>closingDay?30-d+closingDay:d===closingDay?0:closingDay-d;return{d,dl};});
+  const dc=dl=>dl>=25?C.accent:dl>=12?C.warning:C.danger;
+  return(
+    <div style={{padding:"0 14px 24px"}}>
+      <Card style={{marginBottom:14}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:14}}>💰 Metas Financeiras</p>
+        {[["RENDA MENSAL (R$)","monthlyIncome"],["META DE ECONOMIA MENSAL (R$)","savingsGoal"],["ALERTA POR CATEGORIA (R$)","alertThreshold"],["ALERTA DE FATURA ALTA (R$)","invoiceAlert"]].map(([l,k])=>(
+          <TxtInp key={k} label={l} type="number" value={s[k]} onChange={e=>upd(k,Math.max(0,parseFloat(e.target.value)||0))} style={{fontFamily:"'DM Mono',monospace"}} min="0" max="9000000"/>
+        ))}
+      </Card>
+      <Card style={{marginBottom:14}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:4}}>💳 Cartão de Crédito</p>
+        <p style={{color:C.muted,fontSize:12,marginBottom:12,lineHeight:1.5}}>Configure o fechamento para ver os melhores dias de compra.</p>
+        <div style={{display:"flex",gap:10,marginBottom:12}}>
+          {[["closingDay","FECHAMENTO"],["dueDay","VENCIMENTO"]].map(([k,l])=>(
+            <div key={k} style={{flex:1}}><p style={{color:C.muted,fontSize:10,fontWeight:700,marginBottom:4}}>{l}</p>
+            <input type="number" min={1} max={31} value={s.creditCard[k]} onChange={e=>updCC(k,Math.min(31,Math.max(1,parseInt(e.target.value)||1)))} style={{width:"100%",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px",color:C.text,fontSize:16,fontFamily:"'DM Mono',monospace",fontWeight:700,outline:"none",textAlign:"center"}}/></div>
+          ))}
+        </div>
+        <p style={{color:C.muted,fontSize:10,fontWeight:700,marginBottom:8}}>DIAS DO MÊS PARA COMPRAR</p>
+        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+          {days.map(({d,dl})=>{const col=dc(dl);return<div key={d} title={`~${dl} dias até fechar`} style={{width:30,height:30,borderRadius:6,background:col+"20",border:`1px solid ${col}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:col,fontFamily:"'DM Mono',monospace"}}>{d}</div>;})}
+        </div>
+        <div style={{display:"flex",gap:14}}>{[[C.accent,"Ótimo"],[C.warning,"Médio"],[C.danger,"Ruim"]].map(([col,txt])=><div key={txt} style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:2,background:col}}/><span style={{color:C.muted,fontSize:10}}>{txt}</span></div>)}</div>
+      </Card>
+      <Card style={{marginBottom:14}}>
+        <p style={{color:C.text,fontWeight:700,fontSize:14,marginBottom:4}}>🔑 Token Brapi — Ações B3</p>
+        <p style={{color:C.muted,fontSize:12,marginBottom:10,lineHeight:1.5}}>Cole o token de <span style={{color:C.accent}}>brapi.dev</span> para cotações reais. Enviado apenas para brapi.dev via HTTPS.</p>
+        <input type="password" placeholder="Cole seu token aqui..." maxLength={200} value={s.brapiToken||""} onChange={e=>upd("brapiToken",e.target.value)} style={{width:"100%",background:C.surface2,border:`1px solid ${s.brapiToken?C.accent:C.border}`,borderRadius:10,padding:"11px 14px",color:C.text,fontSize:13,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
+        <p style={{color:s.brapiToken?C.accent:C.muted,fontSize:11,marginTop:6}}>{s.brapiToken?"✅ Token configurado — B3 ativa em Mercado.":"Sem token: guia disponível na aba Mercado."}</p>
+      </Card>
+      <PBtn onClick={save} bg={ok?"#00C46E":C.accent} style={{padding:"14px",fontSize:15,transition:"background .3s"}}>{ok?"✓ Configurações salvas!":"Salvar Configurações"}</PBtn>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// APP PRINCIPAL
+// ══════════════════════════════════════════════════════════════════════════════
+const NAV=[{id:"home",icon:"🏠",label:"Início"},{id:"gastos",icon:"💸",label:"Gastos"},{id:"loans",icon:"🏦",label:"Dívidas"},{id:"relat",icon:"📊",label:"Relatórios"},{id:"mercado",icon:"📈",label:"Mercado"},{id:"config",icon:"⚙️",label:"Config"}];
+const TITLES={home:"FinançaLivre",gastos:"Meus Gastos",loans:"Empréstimos",relat:"Relatórios",mercado:"Mercado",config:"Configurações"};
+
+function App() {
+  useFont();
+  const [screen,setScreen]     = useState("loading");
+  const [user,setUser]         = useState(null);
+  const [tab,setTab]           = useState("home");
+  const [expenses,setExpenses] = useState(SAMPLE_EXPENSES);
+  const [loans,setLoans]       = useState(SAMPLE_LOANS);
+  const [settings,setSettings] = useState(DEFAULT_SETTINGS);
+  const [users,setUsers]       = useState([]);
+  const [sync,setSync]         = useState("idle");
+  const timer=useRef(null);
+
+  useEffect(()=>{
+    cloudLoad().then(data=>{
+      if(data){
+        if(data.expenses)setExpenses(data.expenses);
+        if(data.loans&&data.loans.length>0)setLoans(data.loans);
+        if(data.settings)setSettings(s=>({...s,...data.settings}));
+        if(data.users&&data.users.length>0)setUsers(data.users);
+      }
+      setScreen("auth");
+    });
+  },[]);
+
+  useEffect(()=>{
+    if(screen!=="app")return;
+    setSync("saving");
+    clearTimeout(timer.current);
+    timer.current=setTimeout(async()=>{
+      const ok=await cloudSave({expenses,loans,settings,users});
+      setSync(ok?"saved":"error");
+      setTimeout(()=>setSync("idle"),2500);
+    },1500);
+    return()=>clearTimeout(timer.current);
+  },[expenses,loans,settings,users,screen]);
+
+  // Salva users imediatamente quando muda (novo cadastro)
+  useEffect(()=>{
+    if(users.length>0) cloudSave({expenses,loans,settings,users});
+  },[users]);
+
+  const logout=()=>{setScreen("auth");setUser(null);setTab("home");};
+  const SYNC_IC={idle:"☁️",saving:"🔄",saved:"✅",error:"⚠️"};
+  const SYNC_CL={idle:C.muted,saving:C.warning,saved:C.accent,error:C.danger};
+
+  if(screen==="loading")return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,fontFamily:"Sora,sans-serif"}}>
+      <div style={{width:64,height:64,borderRadius:20,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>💰</div>
+      <p style={{color:C.muted,fontSize:13}}>Carregando seus dados...</p>
+    </div>
+  );
+
+  if(screen==="auth")return <AuthScreen users={users} setUsers={setUsers} onLogin={u=>{setUser(u);setScreen("app");}}/>;
+
+  return(
+    <div style={{background:C.bg,minHeight:"100vh",maxWidth:480,margin:"0 auto",fontFamily:"Sora,sans-serif",paddingBottom:80}}>
+      <div style={{padding:"12px 16px",background:C.bg,position:"sticky",top:0,zIndex:50,borderBottom:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <h2 style={{color:C.text,fontWeight:800,fontSize:18}}>{TITLES[tab]}</h2>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span title={{idle:"Salvo",saving:"Salvando...",saved:"Salvo!",error:"Erro ao salvar"}[sync]} style={{color:SYNC_CL[sync],fontSize:14,transition:"color .3s"}}>{SYNC_IC[sync]}</span>
+            <span style={{color:C.muted,fontSize:12}}>{user?.name?.split(" ")[0]}</span>
+            <button onClick={logout} title="Sair da conta" style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>🚪</button>
+          </div>
+        </div>
+      </div>
+      <div style={{paddingTop:16}}>
+        {tab==="home"   &&<HomeTab     expenses={expenses} loans={loans} settings={settings}/>}
+        {tab==="gastos" &&<GastosTab   expenses={expenses} setExpenses={setExpenses}/>}
+        {tab==="loans"  &&<EmprestimosTab loans={loans} setLoans={setLoans}/>}
+        {tab==="relat"  &&<RelatoriosTab  expenses={expenses} loans={loans}/>}
+        {tab==="mercado"&&<MercadoTab  settings={settings}/>}
+        {tab==="config" &&<ConfigTab   settings={settings} setSettings={setSettings}/>}
+      </div>
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:C.surface,borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,4px)"}}>
+        {NAV.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:"none",border:"none",padding:"10px 0 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+            <span style={{fontSize:17,filter:tab===t.id?"none":"grayscale(1) opacity(0.4)"}}>{t.icon}</span>
+            <span style={{color:tab===t.id?C.accent:C.muted,fontSize:8,fontWeight:700,fontFamily:"Sora,sans-serif",lineHeight:1.4}}>{t.label}</span>
+            {tab===t.id&&<div style={{width:16,height:2,borderRadius:2,background:C.accent,marginTop:1}}/>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Botão de instalação PWA (aparece automaticamente no Android) ──────────
+function InstallBanner() {
+  const [show, setShow] = useState(false);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    window.addEventListener("pwa-installable", () => setShow(true));
+    window.addEventListener("pwa-installed",   () => { setShow(false); setDone(true); });
+  }, []);
+  if (done) return null;
+  if (!show) return null;
+  return (
+    <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",
+      width:"calc(100% - 28px)",maxWidth:452,background:"#00D97E",borderRadius:14,
+      padding:"12px 16px",display:"flex",justifyContent:"space-between",
+      alignItems:"center",zIndex:999,boxShadow:"0 4px 24px rgba(0,217,126,.35)"}}>
+      <div>
+        <p style={{color:"#0B2D1E",fontWeight:800,fontSize:14}}>📲 Instalar FinançaLivre</p>
+        <p style={{color:"#0B2D1E",fontSize:11,opacity:.8}}>Adicione à tela inicial do seu celular</p>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>setShow(false)} style={{background:"rgba(0,0,0,.15)",border:"none",borderRadius:8,padding:"7px 12px",color:"#0B2D1E",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Agora não</button>
+        <button onClick={()=>window._installApp()} style={{background:"#0B2D1E",border:"none",borderRadius:8,padding:"7px 14px",color:"#00D97E",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Instalar</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function Root() {
+  return (
+    <>
+      <App/>
+      <InstallBanner/>
+    </>
+  );
+}
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(Root));
+</script>
+</body>
+</html>

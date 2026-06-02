@@ -1,0 +1,16 @@
+{
+  "name": "FinançaLivre",
+  "short_name": "FinançaLivre",
+  "description": "Controle financeiro pessoal — gastos, dívidas, mercado e muito mais.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#0B0F19",
+  "background_color": "#0B0F19",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
